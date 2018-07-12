@@ -2,20 +2,18 @@ import os
 from backalla_utils.misc import recursive_ls
 import random
 
-data_path = "./data/"
+data_path = "./data/omniglot/"
 
-len(all_images)
-
-def get_name_from_path(path):
+def get_label_from_path(path):
     filename = os.path.basename(path)
-    name = filename[:-9]
+    name = filename[:4]
     return name
 
 def get_dataset(data_path = "./data/"):
-    all_images = recursive_ls(data_path)
+    all_images = recursive_ls(data_path,filter="*.png")    
     name_path_dict = {}
     for image_path in all_images:
-        name = get_name_from_path(image_path)
+        name = get_label_from_path(image_path)
         if name in name_path_dict:
             name_path_dict[name].append(image_path)
         else:
