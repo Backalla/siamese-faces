@@ -3,6 +3,7 @@ import utils
 import random
 import cv2
 import numpy as np
+from backalla_utils import tensorflow as tfu
 from backalla_utils.misc import rprint
 
 class Model:
@@ -13,6 +14,8 @@ class Model:
         print(len(self.dataset))
         self.train_data, self.test_data = self.prepare_dataset()
         self.image_height,self.image_width,self.image_channels = 105,105,3
+        self.model = tfu.Model(name = "test-model")
+        self.model_graph = self.model.init().as_default()
         self.Xa = tf.placeholder(tf.float32,shape=[None,self.image_height,self.image_width,self.image_channels],name="anchor_image_input")
         self.Xp = tf.placeholder(tf.float32,shape=[None,self.image_height,self.image_width,self.image_channels],name="positive_image_input")
         self.Xn = tf.placeholder(tf.float32,shape=[None,self.image_height,self.image_width,self.image_channels],name="negative_image_input")
@@ -101,9 +104,11 @@ class Model:
         optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
         return [optimizer,loss]
     
-    def train(self,num_epochs = 20):
-        with tf.Session() as sess:
+    def train(self,num_epochs = 20,restore_model=False):
+        with self.model.session() as sess:
             sess.run(tf.global_variables_initializer())
+            if restore_model:
+                self.model.restore_weights()
             num_train_samples = len(self.train_data)
             for epoch in range(num_epochs):
                 print("Epoch:",epoch)
@@ -113,6 +118,8 @@ class Model:
                     train_batch_xn = np.array(self.train_data[batch_index:batch_index+self.batch_size])[:,2,:]
                     _, loss_val = sess.run(self.train_ops,feed_dict = {self.Xa:train_batch_xa,self.Xp: train_batch_xp, self.Xn: train_batch_xn, self.a: 2.0})
                     rprint("Batch: {}  Loss: {}".format(batch_index,loss_val))
+                if epoch%5==0:
+                    self.model.save_weights(weight_file_prefix="test")
 
 
 
