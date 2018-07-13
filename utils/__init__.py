@@ -2,7 +2,6 @@ import os
 from backalla_utils.misc import recursive_ls
 import random
 
-data_path = "./data/omniglot/"
 
 def get_label_from_path(path):
     filename = os.path.basename(path)
