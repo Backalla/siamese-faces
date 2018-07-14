@@ -11,12 +11,15 @@ import pickle
 class Model:
     def __init__(self, model_name, batch_size = 32, data_path = "./data/omniglot/", learning_rate=1e-3):
         self.dataset = utils.get_dataset(data_path=data_path)
+        print(f"Num of classes: {len(self.dataset)}")
         self.batch_size = batch_size
         self.learning_rate = learning_rate
+        self.model_name = model_name
         print(len(self.dataset))
-        self.train_data, self.test_data = self.prepare_dataset()
+        self.train_data, self.valid_data = self.prepare_dataset()
         self.image_height,self.image_width,self.image_channels = 105,105,3
-        self.model = tfu.Model(name = model_name)
+        self.model = tfu.Model(name = self.model_name)
+        self.model_summaries = []
         self.model_graph = self.model.init().as_default()
         self.Xa = tf.placeholder(tf.float32,shape=[None,self.image_height,self.image_width,self.image_channels],name="anchor_image_input")
         self.Xp = tf.placeholder(tf.float32,shape=[None,self.image_height,self.image_width,self.image_channels],name="positive_image_input")
@@ -28,7 +31,7 @@ class Model:
         self.combined_image_summary = tf.summary.image("imput_images",self.X_combined)
         self.Xa_embed, self.Xp_embed, self.Xn_embed = self.build_model(self.Xa,False),self.build_model(self.Xp,True),self.build_model(self.Xn,True)
         self.train_data_init, self.train_data_next = self.get_dataset_iterator(self.train_data,self.batch_size)
-        self.test_data_init, self.test_data_next = self.get_dataset_iterator(self.test_data,self.batch_size)
+        self.valid_data_init, self.valid_data_next = self.get_dataset_iterator(self.valid_data,self.batch_size)
         self.train_ops = self.build_train_ops()
         self.model.visualise()
         # self.train()
@@ -38,7 +41,7 @@ class Model:
 
         labels_list = list(self.dataset.keys())
         train_dataset_list = []
-        test_dataset_list = []
+        valid_dataset_list = []
         num_batches = 400
         for _ in range(self.batch_size*num_batches):
             label_positive,label_negative = random.sample(labels_list,2)
@@ -52,12 +55,12 @@ class Model:
             assert label_positive != label_negative, "Positive and negative labels cannot be same."
             [anchor_path,positive_path] = random.sample(self.dataset[label_positive]["valid"],2)
             [negative_path] = random.sample(self.dataset[label_negative]["valid"],1)
-            test_dataset_list.append([anchor_path,positive_path,negative_path])
+            valid_dataset_list.append([anchor_path,positive_path,negative_path])
         
 
         
 
-        return train_dataset_list, test_dataset_list
+        return train_dataset_list, valid_dataset_list
 
     def parse_function(self, filename):
         anchor_image_string = tf.read_file(filename[0])
@@ -89,68 +92,54 @@ class Model:
         next_element = iterator.get_next()
         init_op = iterator.initializer
 
-        return init_op, next_element   
+        return init_op, next_element  
+
+    def _conv_layer(self, input, num_filters, kernel_size, activation, padding, scope, reuse):
+        with tf.variable_scope(scope) as scope_obj:
+            cnn_output = tf.contrib.layers.conv2d(input, num_filters, kernel_size, activation_fn=activation, padding=padding,
+                    weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),scope=scope_obj,reuse=reuse)
+            if not reuse:        
+                print(f"{scope}:",cnn_output.get_shape())
+                self.model_summaries.append(tf.contrib.layers.summarize_tensor(cnn_output,scope))
+        return cnn_output
+    
+    def _maxpool_layer(self,input, kernel_size, padding, scope, reuse):
+        with tf.variable_scope(scope) as scope_obj:
+            maxpool_output = tf.contrib.layers.max_pool2d(input, kernel_size=kernel_size, padding=padding)
+            if not reuse:
+                print(f"{scope}:",maxpool_output.get_shape())
+        return maxpool_output
+
+
+
     def build_model(self,input,reuse=False):
         if not reuse:
             print("input:",input.get_shape())
         with tf.name_scope("model"):
-            with tf.variable_scope("conv1") as scope:
-                net = tf.contrib.layers.conv2d(input, 32, [7, 7], activation_fn=tf.nn.relu, padding='SAME',
-                    weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),scope=scope,reuse=reuse)
-                if not reuse:        
-                    print("conv1:",net.get_shape())
+            
                 
-                net = tf.contrib.layers.max_pool2d(net, [2, 2], padding='SAME')
-                if not reuse:
-                    print("maxpool1:",net.get_shape())
+            net = self._conv_layer(input=input,num_filters=32, kernel_size=[7,7], activation=tf.nn.relu, padding="SAME", scope="conv1",reuse=reuse)
+            net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool1", reuse=reuse)
+            
+            net = self._conv_layer(input=net,num_filters=64, kernel_size=[5,5], activation=tf.nn.relu, padding="SAME", scope="conv2",reuse=reuse)
+            net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool2", reuse=reuse)
 
+            net = self._conv_layer(input=net,num_filters=128, kernel_size=[3,3], activation=tf.nn.relu, padding="SAME", scope="conv3",reuse=reuse)
+            net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool3", reuse=reuse)
 
-            with tf.variable_scope("conv2") as scope:
-                net = tf.contrib.layers.conv2d(net, 64, [5, 5], activation_fn=tf.nn.relu, padding='SAME',
-                    weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),scope=scope,reuse=reuse)
-                if not reuse:                
-                    print("conv2:",net.get_shape())
-                
-                net = tf.contrib.layers.max_pool2d(net, [2, 2], padding='SAME')
-                if not reuse:
-                    print("maxpool2:",net.get_shape())
+            net = self._conv_layer(input=net,num_filters=128, kernel_size=[1,1], activation=tf.nn.relu, padding="SAME", scope="conv4",reuse=reuse)
+            net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool4", reuse=reuse)
 
-            with tf.variable_scope("conv3") as scope:
-                net = tf.contrib.layers.conv2d(net, 128, [3, 3], activation_fn=tf.nn.relu, padding='SAME',
-                    weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),scope=scope,reuse=reuse)
-                if not reuse:
-                    print("conv3:",net.get_shape())
-                
-                net = tf.contrib.layers.max_pool2d(net, [2, 2], padding='SAME')
-                if not reuse:
-                    print("maxpool3:",net.get_shape())
-
-
-            with tf.variable_scope("conv4") as scope:
-                net = tf.contrib.layers.conv2d(net, 128, [1, 1], activation_fn=tf.nn.relu, padding='SAME',
-                    weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),scope=scope,reuse=reuse)
-                if not reuse:
-                    print("conv4:",net.get_shape())
-                
-                net = tf.contrib.layers.max_pool2d(net, [2, 2], padding='SAME')
-                if not reuse:
-                    print("maxpool4:",net.get_shape())
-
-
-            with tf.variable_scope("conv5") as scope:
-                net = tf.contrib.layers.conv2d(net, 2, [1, 1], activation_fn=None, padding='SAME',
-                    weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),scope=scope,reuse=reuse)
-                if not reuse:
-                    print("conv5:",net.get_shape())
-                
-                net = tf.contrib.layers.max_pool2d(net, [2, 2], padding='SAME')
-                if not reuse:
-                    print("maxpool5:",net.get_shape())
-
+            net = self._conv_layer(input=net,num_filters=8, kernel_size=[1,1], activation=None, padding="SAME", scope="conv5",reuse=reuse)
+            net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool5", reuse=reuse)
 
             net = tf.contrib.layers.flatten(net)
             if not reuse:
                 print("flatten:",net.get_shape())
+            
+            # net = tf.layers.dense(inputs=net, units=128, activation=tf.nn.relu, kernel_initializer=tf.contrib.layers.xavier_initializer())
+            # if not reuse:
+            #     print("fully-connected:",net.get_shape())
 
         
         return net
@@ -168,24 +157,24 @@ class Model:
     def build_train_ops(self):
         loss,pos_dist,neg_dist = self.triplet_loss(self.Xa_embed, self.Xp_embed, self.Xn_embed, self.a)
         loss_summary = tf.summary.scalar("loss",loss)
-        test_loss_summary = tf.summary.scalar("test_loss",loss)
+        valid_loss_summary = tf.summary.scalar("valid_loss",loss)
         
         pos_dist_mean = tf.reduce_mean(pos_dist)
         neg_dist_mean = tf.reduce_mean(neg_dist)
         
         pos_dist_summary = tf.summary.scalar("pos_dist",pos_dist_mean)
-        test_pos_dist_summary = tf.summary.scalar("test_pos_dist",pos_dist_mean)
+        valid_pos_dist_summary = tf.summary.scalar("valid_pos_dist",pos_dist_mean)
         
         neg_dist_summary = tf.summary.scalar("neg_dist",neg_dist_mean)
-        test_neg_dist_summary = tf.summary.scalar("test_neg_dist",neg_dist_mean)
+        valid_neg_dist_summary = tf.summary.scalar("valid_neg_dist",neg_dist_mean)
         
         difference_summary = tf.summary.scalar("neg-pos", neg_dist_mean-pos_dist_mean)
-        test_difference_summary = tf.summary.scalar("test_neg-pos", neg_dist_mean-pos_dist_mean)
+        valid_difference_summary = tf.summary.scalar("valid_neg-pos", neg_dist_mean-pos_dist_mean)
 
         optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
         return {
             "train":[optimizer,loss, loss_summary,pos_dist_summary,neg_dist_summary,difference_summary],
-            "test": [loss,test_loss_summary,test_pos_dist_summary,test_neg_dist_summary,test_difference_summary]
+            "valid": [loss,valid_loss_summary,valid_pos_dist_summary,valid_neg_dist_summary,valid_difference_summary]
         }
 
 
@@ -214,7 +203,7 @@ class Model:
     
     def create_validation_db(self):
         train_labels = {}
-        test_labels = {}
+        valid_labels = {}
         for label in self.dataset:
             validation_paths = self.dataset[label]['valid']
             if len(validation_paths)<4:
@@ -223,12 +212,15 @@ class Model:
             train_labels[validation_paths[0]] = label
             train_labels[validation_paths[1]] = label
             train_labels[validation_paths[2]] = label
-            test_labels[validation_paths[3]] = label
+            valid_labels[validation_paths[3]] = label
         
         self.build_known_entities(train_labels,"train_embeddings")
-        self.build_known_entities(test_labels,"test_embeddings")
+        self.build_known_entities(valid_labels,"valid_embeddings")
             
-        
+    def _write_summaries(self, summaries, step):
+        for summary in summaries:
+            self.model.summary_writer.add_summary(summary,global_step=step)
+
 
 
     def train(self,num_epochs = 1000,restore_model=False):
@@ -237,44 +229,40 @@ class Model:
             if restore_model:
                 self.model.restore_weights()
             sess.run(self.train_data_init)
-            sess.run(self.test_data_init)
+            sess.run(self.valid_data_init)
             for epoch in range(num_epochs):
                 print("\nEpoch:",epoch)
                 train_batch_index = 0
-                test_batch_index = 0 
+                valid_batch_index = 0
+                epoch_start_time = time.time() 
                 while True:
                     try:
                         start_time = time.time()
                         train_batch_xa, train_batch_xp, train_batch_xn = sess.run(self.train_data_next)
-                        test_batch_xa, test_batch_xp, test_batch_xn = sess.run(self.test_data_next)
+                        valid_batch_xa, valid_batch_xp, valid_batch_xn = sess.run(self.valid_data_next)
                         combined_image = np.concatenate((train_batch_xa, train_batch_xp, train_batch_xn),axis=1)
                         if train_batch_index % 20==0:
                             self.model.summary_writer.add_summary(sess.run(self.combined_image_summary,feed_dict={ self.X_combined:combined_image}),global_step=sess.run(self.global_step))
 
-                        _, loss_val, loss_summary_val,pos_dist_summary_val,neg_dist_summary_val, difference_summary_val = sess.run(self.train_ops["train"],feed_dict = {self.Xa:train_batch_xa,self.Xp: train_batch_xp, self.Xn: train_batch_xn, self.a: 5.0})
-                        self.model.summary_writer.add_summary(loss_summary_val,global_step=sess.run(self.global_step))
-                        self.model.summary_writer.add_summary(pos_dist_summary_val,global_step=sess.run(self.global_step))
-                        self.model.summary_writer.add_summary(neg_dist_summary_val,global_step=sess.run(self.global_step))
-                        self.model.summary_writer.add_summary(difference_summary_val,global_step=sess.run(self.global_step))
+                        train_outputs = sess.run(self.train_ops["train"]+self.model_summaries,feed_dict = {self.Xa:train_batch_xa,self.Xp: train_batch_xp, self.Xn: train_batch_xn, self.a: 5.0})
+                        loss_val = train_outputs[1]
+                        train_summaries_vals = train_outputs[2:]
 
+                        valid_outputs = sess.run(self.train_ops["valid"],feed_dict = {self.Xa:valid_batch_xa,self.Xp: valid_batch_xp, self.Xn: valid_batch_xn, self.a: 5.0})
+                        valid_summaries_vals = valid_outputs[1:]
 
-                        loss_val, loss_summary_val,pos_dist_summary_val,neg_dist_summary_val, difference_summary_val = sess.run(self.train_ops["test"],feed_dict = {self.Xa:test_batch_xa,self.Xp: test_batch_xp, self.Xn: test_batch_xn, self.a: 5.0})
-                        self.model.summary_writer.add_summary(loss_summary_val,global_step=sess.run(self.global_step))
-                        self.model.summary_writer.add_summary(pos_dist_summary_val,global_step=sess.run(self.global_step))
-                        self.model.summary_writer.add_summary(neg_dist_summary_val,global_step=sess.run(self.global_step))
-                        self.model.summary_writer.add_summary(difference_summary_val,global_step=sess.run(self.global_step))
-
+                        # summaries_list = [loss_summary_val,pos_dist_summary_val,neg_dist_summary_val, difference_summary_val,valid_loss_summary_val,valid_pos_dist_summary_val,valid_neg_dist_summary_val, valid_difference_summary_val]
+                        self._write_summaries(train_summaries_vals+valid_summaries_vals,sess.run(self.global_step))
+                        
                         sess.run(self.increment_global_step_op)
-                        rprint(f"Batch: {train_batch_index}-{test_batch_index}, Loss: {loss_val:.4f}, Time: {(time.time()-start_time):.4f}")
+                        rprint(f"Batch: {train_batch_index}-{valid_batch_index}, Loss: {loss_val:.4f}, Time: {(time.time()-epoch_start_time):.4f}, Time/batch: {(time.time()-start_time):.4f}")
                         train_batch_index+=1
-                        test_batch_index+=1
+                        valid_batch_index+=1
                     
                     except tf.errors.OutOfRangeError:
-                        print("\nBatch ended")
-                        train_batch_index=0
-                        test_batch_index=0
                         sess.run(self.train_data_init)
-                        sess.run(self.test_data_init)
+                        sess.run(self.valid_data_init)
+                        break
                     except KeyboardInterrupt:
                         print("Training paused..")
 
@@ -292,7 +280,7 @@ class Model:
                             return
                         elif option.lower() == 's':
                             print("Saving model..")
-                            self.model.save_weights(weight_file_prefix="test")
+                            self.model.save_weights(weight_file_prefix=self.model_name)
 
                         else:
                             print("Resuming training..")
