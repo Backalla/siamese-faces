@@ -7,6 +7,9 @@ from backalla_utils import tensorflow as tfu
 from backalla_utils.misc import rprint
 import time
 import pickle
+from sklearn.neighbors import KNeighborsClassifier
+
+
 
 class Model:
     def __init__(self, model_name, batch_size = 32, data_path = "./data/omniglot/", learning_rate=1e-3):
@@ -17,7 +20,7 @@ class Model:
         self.model_name = model_name
         print(len(self.dataset))
         self.train_data, self.valid_data = self.prepare_dataset()
-        self.image_height,self.image_width,self.image_channels = 105,105,3
+        self.image_height,self.image_width,self.image_channels = 32,32,3
         self.model = tfu.Model(name = self.model_name)
         self.model_summaries = []
         self.model_graph = self.model.init().as_default()
@@ -68,18 +71,18 @@ class Model:
         negative_image_string = tf.read_file(filename[2])
 
 
-        anchor_image = tf.image.decode_image(anchor_image_string, channels=self.image_channels)
-        positive_image = tf.image.decode_image(positive_image_string, channels=self.image_channels)
-        negative_image = tf.image.decode_image(negative_image_string, channels=self.image_channels)
+        anchor_image = tf.image.decode_png(anchor_image_string, channels=self.image_channels)
+        positive_image = tf.image.decode_png(positive_image_string, channels=self.image_channels)
+        negative_image = tf.image.decode_png(negative_image_string, channels=self.image_channels)
 
         # This will convert to float values in [0, 1]
         anchor_image = tf.image.convert_image_dtype(anchor_image, tf.float32)
         positive_image = tf.image.convert_image_dtype(positive_image, tf.float32)
         negative_image = tf.image.convert_image_dtype(negative_image, tf.float32)
 
-        anchor_image = tf.image.resize_image_with_crop_or_pad(anchor_image, self.image_height, self.image_width)
-        positive_image = tf.image.resize_image_with_crop_or_pad(positive_image, self.image_height, self.image_width)
-        negative_image = tf.image.resize_image_with_crop_or_pad(negative_image, self.image_height, self.image_width)
+        anchor_image = tf.image.resize_images(anchor_image, [self.image_height, self.image_width])
+        positive_image = tf.image.resize_images(positive_image, [self.image_height, self.image_width])
+        negative_image = tf.image.resize_images(negative_image, [self.image_height, self.image_width])
 
         return anchor_image, positive_image, negative_image
 
@@ -94,13 +97,16 @@ class Model:
 
         return init_op, next_element  
 
-    def _conv_layer(self, input, num_filters, kernel_size, activation, padding, scope, reuse):
+    def _conv_layer(self, input, num_filters, kernel_size, activation, padding, scope, reuse, batch_norm=False):
         with tf.variable_scope(scope) as scope_obj:
             cnn_output = tf.contrib.layers.conv2d(input, num_filters, kernel_size, activation_fn=activation, padding=padding,
                     weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),scope=scope_obj,reuse=reuse)
             if not reuse:        
                 print(f"{scope}:",cnn_output.get_shape())
                 self.model_summaries.append(tf.contrib.layers.summarize_tensor(cnn_output,scope))
+            
+            if batch_norm:
+                cnn_output = tf.layers.batch_normalization(cnn_output, axis=3, training=True,reuse=reuse)
         return cnn_output
     
     def _maxpool_layer(self,input, kernel_size, padding, scope, reuse):
@@ -118,17 +124,17 @@ class Model:
         with tf.name_scope("model"):
             
                 
-            net = self._conv_layer(input=input,num_filters=32, kernel_size=[7,7], activation=tf.nn.relu, padding="SAME", scope="conv1",reuse=reuse)
+            net = self._conv_layer(input=input,num_filters=16, kernel_size=[7,7], activation=tf.nn.relu, padding="SAME", scope="conv1",reuse=reuse)
             net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool1", reuse=reuse)
             
-            net = self._conv_layer(input=net,num_filters=64, kernel_size=[5,5], activation=tf.nn.relu, padding="SAME", scope="conv2",reuse=reuse)
+            net = self._conv_layer(input=net,num_filters=32, kernel_size=[5,5], activation=tf.nn.relu, padding="SAME", scope="conv2",reuse=reuse,batch_norm=True)
             net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool2", reuse=reuse)
 
-            net = self._conv_layer(input=net,num_filters=128, kernel_size=[3,3], activation=tf.nn.relu, padding="SAME", scope="conv3",reuse=reuse)
+            net = self._conv_layer(input=net,num_filters=64, kernel_size=[3,3], activation=tf.nn.relu, padding="SAME", scope="conv3",reuse=reuse)
             net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool3", reuse=reuse)
 
-            net = self._conv_layer(input=net,num_filters=128, kernel_size=[1,1], activation=tf.nn.relu, padding="SAME", scope="conv4",reuse=reuse)
-            net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool4", reuse=reuse)
+            # net = self._conv_layer(input=net,num_filters=128, kernel_size=[1,1], activation=tf.nn.relu, padding="SAME", scope="conv4",reuse=reuse,batch_norm=True)
+            # net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool4", reuse=reuse)
 
             net = self._conv_layer(input=net,num_filters=8, kernel_size=[1,1], activation=None, padding="SAME", scope="conv5",reuse=reuse)
             net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool5", reuse=reuse)
@@ -189,6 +195,7 @@ class Model:
 
         for path in labels_json:
             image_obj = cv2.imread(path)/255.0
+            image_obj = cv2.resize(image_obj,(self.image_height,self.image_width))
             images_list.append(image_obj)
             labels.append(label2int[labels_json[path]])
         
@@ -215,8 +222,18 @@ class Model:
             valid_labels[validation_paths[3]] = label
         
         self.build_known_entities(train_labels,"train_embeddings")
-        self.build_known_entities(valid_labels,"valid_embeddings")
-            
+        self.build_known_entities(valid_labels,"valid_embeddings")         
+    
+    def calculate_accuracy(self):
+        classifier = KNeighborsClassifier(n_neighbors=2)
+        (y,x) = pickle.load(open("train_embeddings.p","rb"))
+        classifier.fit(x,y)
+        (y_test,x_test) = pickle.load(open("valid_embeddings.p","rb"))
+        predictions = classifier.predict(x_test)
+        correct = predictions==y_test
+        accuracy = np.sum(correct)/len(predictions)
+        print(f"Accuracy: {(accuracy*100):.3f}%")
+    
     def _write_summaries(self, summaries, step):
         for summary in summaries:
             self.model.summary_writer.add_summary(summary,global_step=step)
