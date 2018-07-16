@@ -19,7 +19,7 @@ class Model:
         self.learning_rate = learning_rate
         self.model_name = model_name
         self.train_data, self.valid_data = self.prepare_dataset()
-        self.image_height,self.image_width,self.image_channels = 64,64,1
+        self.image_height,self.image_width,self.image_channels = 32,32,1
         self.model = tfu.Model(name = self.model_name)
         self.model_summaries = []
         self.model_graph = self.model.init().as_default()
@@ -124,18 +124,23 @@ class Model:
             
                 
             net = self._conv_layer(input=input,num_filters=16, kernel_size=[7,7], activation=tf.nn.relu, padding="SAME", scope="conv1",reuse=reuse)
+            net = self._conv_layer(input=input,num_filters=16, kernel_size=[7,7], activation=tf.nn.relu, padding="SAME", scope="conv1_2",reuse=reuse)
+
             net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool1", reuse=reuse)
             
             net = self._conv_layer(input=net,num_filters=32, kernel_size=[5,5], activation=tf.nn.relu, padding="SAME", scope="conv2",reuse=reuse,batch_norm=True)
+            net = self._conv_layer(input=net,num_filters=32, kernel_size=[5,5], activation=tf.nn.relu, padding="SAME", scope="conv2_2",reuse=reuse,batch_norm=True)
             net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool2", reuse=reuse)
 
             net = self._conv_layer(input=net,num_filters=64, kernel_size=[3,3], activation=tf.nn.relu, padding="SAME", scope="conv3",reuse=reuse)
+            net = self._conv_layer(input=net,num_filters=64, kernel_size=[3,3], activation=tf.nn.relu, padding="SAME", scope="conv3_2",reuse=reuse)
             net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool3", reuse=reuse)
 
-            # net = self._conv_layer(input=net,num_filters=128, kernel_size=[1,1], activation=tf.nn.relu, padding="SAME", scope="conv4",reuse=reuse,batch_norm=True)
-            # net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool4", reuse=reuse)
+            net = self._conv_layer(input=net,num_filters=128, kernel_size=[1,1], activation=tf.nn.relu, padding="SAME", scope="conv4",reuse=reuse,batch_norm=True)
+            net = self._conv_layer(input=net,num_filters=128, kernel_size=[1,1], activation=tf.nn.relu, padding="SAME", scope="conv4_2",reuse=reuse,batch_norm=True)
+            net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool4", reuse=reuse)
 
-            net = self._conv_layer(input=net,num_filters=8, kernel_size=[1,1], activation=None, padding="SAME", scope="conv5",reuse=reuse)
+            net = self._conv_layer(input=net,num_filters=128, kernel_size=[1,1], activation=tf.nn.relu, padding="SAME", scope="conv5",reuse=reuse)
             net = self._maxpool_layer(input=net,kernel_size=2,padding="SAME", scope="maxpool5", reuse=reuse)
 
             net = tf.contrib.layers.flatten(net)
