@@ -18,9 +18,8 @@ class Model:
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.model_name = model_name
-        print(len(self.dataset))
         self.train_data, self.valid_data = self.prepare_dataset()
-        self.image_height,self.image_width,self.image_channels = 32,32,3
+        self.image_height,self.image_width,self.image_channels = 64,64,1
         self.model = tfu.Model(name = self.model_name)
         self.model_summaries = []
         self.model_graph = self.model.init().as_default()
@@ -194,8 +193,10 @@ class Model:
         int2label = {label2int[label]:label for label in label2int}
 
         for path in labels_json:
-            image_obj = cv2.imread(path)/255.0
+            image_obj = cv2.imread(path,0)/255.0
             image_obj = cv2.resize(image_obj,(self.image_height,self.image_width))
+            image_obj = np.expand_dims(image_obj,axis=3)
+
             images_list.append(image_obj)
             labels.append(label2int[labels_json[path]])
         
